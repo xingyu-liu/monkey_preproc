@@ -1,0 +1,365 @@
+#! /usr/bin/env python3
+##########################################################################
+# NSAp - Copyright (C) CEA, 2013 - 2019
+# Distributed under the terms of the CeCILL-B license, as published by
+# the CEA-CNRS-INRIA. Refer to the LICENSE file or to
+# http://www.cecill.info/licences/Licence_CeCILL-B_V1-en.html
+# for details.
+##########################################################################
+
+# System import
+from __future__ import print_function
+import os
+import sys
+import json
+import argparse
+import textwrap
+from pprint import pprint
+from datetime import datetime
+from argparse import RawTextHelpFormatter
+
+# Module import
+import pypreclin
+from pypreclin import DEFAULT_FSL_PATH
+from pypreclin import __version__ as version
+from pypreclin.workflow.preproc_fmri import preproc
+
+# Third party import
+from pyconnectome.wrapper import FSLWrapper
+from pyconnectome import __version__ as pyconnectome_version
+from pyconnectomist import __version__ as pyconnectomist_version
+
+
+# Parameters to keep trace
+__hopla__ = ["runtime", "inputs", "outputs"]
+
+
+# Script command lines examples
+"""
+python $HOME/git/preprocessing_monkey/pypreclin/scripts/pypreclin_preproc_fmri \
+    -v 2 \
+    -o /volatile/nsap/monkey/processed \
+    -s taro \
+    -f /volatile/nsap/monkey/hole/sleep/taro/func_decimated.nii \
+    -a /volatile/nsap/monkey/hole/sleep/taro/anat_after.nii \
+    -r 1.25 \
+    -t /volatile/nsap/monkey/reference/mni-resampled_1by1by1.nii \
+    -na RAS \
+    -nf RIA \
+    -k 3 \
+    -wr 0 1 0 \
+    -c /etc/fsl/5.0/fsl.sh \
+    -j /home/ag239446/local/jip-Linux-x86_64/bin \
+    -p /i2bm/local/spm12/ \
+    -u
+
+python $HOME/git/preprocessing_monkey/pypreclin/scripts/pypreclin_preproc_fmri \
+    -v 2 \
+    -o /volatile/nsap/monkey/processed \
+    -s jade \
+    -f /volatile/nsap/monkey/no_hole/sleep/jade/func.nii \
+    -a /volatile/nsap/monkey/no_hole/sleep/jade/anat.nii.gz \
+    -r 2.4 \
+    -t /volatile/nsap/monkey/reference/mni-resampled_1by1by1.nii \
+    -na RIA \
+    -nf RIA \
+    -j /home/ag239446/local/jip-Linux-x86_64/bin
+
+
+python $HOME/git/preprocessing_monkey/pypreclin/scripts/pypreclin_preproc_fmri \
+    -o /volatile/nsap/monkey/processed \
+    -s yoshi \
+    -f /volatile/nsap/monkey/yoshi/epi_decimated.nii.gz \
+    -a /volatile/nsap/monkey/yoshi/t1.nii \
+    -r 1.25 \
+    -t /volatile/nsap/monkey/reference/mni-resampled_1by1by1.nii \
+    -j /home/ag239446/local/jip-Linux-x86_64/bin \
+    -C /etc/fsl/5.0/fsl.sh \
+    -NA RIA \
+    -NF RIA \
+    -V 2
+"""
+
+
+def is_file(filearg):
+    """ Type for argparse - checks that file exists but does not open.
+    """
+    if not os.path.isfile(filearg):
+        raise argparse.ArgumentError(
+            "The file '{0}' does not exist!".format(filearg))
+    return filearg
+
+
+def is_directory(dirarg):
+    """ Type for argparse - checks that directory exists.
+    """
+    if not os.path.isdir(dirarg):
+        raise argparse.ArgumentError(
+            "The directory '{0}' does not exist!".format(dirarg))
+    return dirarg
+
+
+class Range(object):
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
+    def __eq__(self, other):
+        return self.start <= other <= self.end
+    def __repr__(self):
+        return "{0}-{1}".format(self.start, self.end)
+
+
+def get_cmd_line_args():
+    """
+    Create a command line argument parser and return a dict mapping
+    <argument name> -> <argument value>.
+    """
+    parser = argparse.ArgumentParser(
+        prog="pypreclin_preproc_fmri",
+        description=textwrap.dedent(pypreclin.__doc__),
+        formatter_class=RawTextHelpFormatter)
+
+    # Required arguments
+    required = parser.add_argument_group("required arguments")
+    required.add_argument(
+        "-f", "--funcfile",
+        required=True,
+        type=is_file,
+        metavar="<funcfile>",
+        help="path to the fMRI NIFTI file.")
+    required.add_argument(
+        "-a", "--anatfile",
+        required=True,
+        type=is_file,
+        metavar="<anatfile>",
+        help="path to the anatomical NIFTI file.")
+    required.add_argument(
+        "-s", "--sid",
+        required=True,
+        metavar="<subject id>",
+        help="the subject identifier.")
+    required.add_argument(
+        "-o", "--outdir",
+        required=True,
+        metavar="<outdir>",
+        help="the destination folder where the data will be generated.")
+    required.add_argument(
+        "-r", "--repetitiontime",
+        type=float,
+        required=True,
+        metavar="<repetition time>",
+        help="the repetition time.")
+    required.add_argument(
+        "-t", "--template",
+        type=is_file,
+        required=True,
+        metavar="<path template>",
+        help="the path to the template image in RAS space.")
+    required.add_argument(
+        "-j", "--jipdir",
+        type=is_directory,
+        required=True,
+        metavar="<jip path>",
+        help="the jip software binary path.")
+
+    # Optional arguments
+    parser.add_argument(
+        "-V", "--verbose",
+        type=int,
+        choices=[0, 1, 2],
+        default=0,
+        metavar="<verbose>",
+        help="the verbosity level: 0 silent, >0 verbose.")
+    parser.add_argument(
+        "-E", "--erase",
+        action="store_true",
+        help="if set clean the destination folder if it exists.")
+    parser.add_argument(
+        "-R", "--resample",
+        action="store_true",
+        help="if set resample the input template to fit the anatomical image.")
+    parser.add_argument(
+        "-I", "--interleaved",
+        action="store_true",
+        help="use interleaved acquisition.")
+    parser.add_argument(
+        "-O", "--sliceorder",
+        choices=("ascending", "descending"),
+        default="ascending",
+        help="the acquisition slice order.")
+    parser.add_argument(
+        "-D", "--realign-dof",
+        type=int, default=6, metavar="<dof>",
+        help="the DOF used during the volumes realignment level.")
+    parser.add_argument(
+        "-Z", "--realign-to-vol",
+        action="store_true",
+        help="during realignment register timeseries to first or mean volume.")
+    parser.add_argument(
+        "-W", "--warp",
+        action="store_true",
+        help="use a non linear registration to remove B0 first and second "
+             "orders approximation inhomogeneities artifacts.")
+    parser.add_argument(
+        "-WN", "--warp-njobs",
+        type=int,
+        default=1,
+        help="the number of jobs running in parallel during the the B0 "
+             "inhomogeneities correction.")
+    parser.add_argument(
+        "-WI", "--warp-index",
+        type=int,
+        default=8,
+        help="if the '-w' option is set, use this parameter to "
+             "specify the reference volume index in the timeserie.")
+    parser.add_argument(
+        "-WF", "--warp-file",
+        help="if the '-w' option is set, use this parameter to specify the "
+             "reference volume to be used.")
+    parser.add_argument(
+        "-WR", "--warp-restrict",
+        type=int,
+        nargs=3,
+        default=(0, 1, 0),
+        help="restrict the deformation in the given axis.")
+    parser.add_argument(
+        "-WT", "--delta-te",
+        type=float,
+        metavar="<delta TE>",
+        help="the difference in msec between the 2 echoes of the B0 magnitude"
+             "map (usually 2.46ms).")
+    parser.add_argument(
+        "-WD", "--dwell-time",
+        type=float,
+        metavar="<dwell time>",
+        help="The dwell time or effective echo spacing.")
+    parser.add_argument(
+        "-WA", "--manufacturer",
+        type=str,
+        default="SIEMENS",
+        help="Scanner manufacturer (must be SIEMENS).")
+    parser.add_argument(
+        "-WB", "--blip-files",
+        type=is_file,
+        metavar="<path>",
+        nargs=2,
+        help="The 2 EPI data acquired in opposite phase enc. direction.")
+    parser.add_argument(
+        "-WE", "--blip-enc-dirs",
+        metavar="<path>",
+        nargs=2,
+        choices=("i", "i-", "j", "j-"),
+        help="The 2 EPI data enc. directions.")
+    parser.add_argument(
+        "-WU", "--unwarp-direction",
+        metavar="<path>",
+        choices=("i", "i-", "j", "j-"),
+        help="The EPI functional data enc. direction.")
+    parser.add_argument(
+        "-WP", "--phase-file",
+        type=is_file, metavar="<path>",
+        help="Phase difference fieldmap image from a SIEMENS scanner.")
+    parser.add_argument(
+        "-WM", "--magnitude-file",
+        type=is_file, metavar="<path>",
+        help="Two magnitude fieldmap image from a SIEMENS scanner (one for "
+             "each echo time).")
+    parser.add_argument(
+        "-NA", "--anatorient",
+        metavar="<anatorientation>",
+        default="RAS",
+        help="the input anatomical image orientation.")
+    parser.add_argument(
+        "-NF", "--funcorient",
+        metavar="<funcorientation>",
+        default="RAS",
+        help="the input functional image orientation.")
+    parser.add_argument(
+        "-K", "--kernel-size",
+        type=float,
+        default=3.,
+        metavar="<smooth kernel size>",
+        help="the smoothing kernel size in mm.")
+    parser.add_argument(
+        "-C", "--fslconfig",
+        type=is_file,
+        metavar="<fsl config>",
+        help="the FSL configuration script.")
+    parser.add_argument(
+        "-N", "--normalization-trf",
+        type=is_file,
+        metavar="<jip normalization trf>",
+        help="the JIP normalization 'align.com' file.")
+    parser.add_argument(
+        "-M", "--coregistration-trf",
+        type=is_file,
+        metavar="<jip coregistration trf>",
+        help="the JIP coregistration 'align.com' file.")
+    parser.add_argument(
+        "-R1", "--recon1",
+        action="store_true",
+        help="run processing steps 1-4 only.")
+    parser.add_argument(
+        "-R2", "--recon2",
+        action="store_true",
+        help="run processing steps 1-7 only.")
+    parser.add_argument(
+        "-A", "--auto",
+        action="store_true",
+        help="control the JIP window with the script.")
+
+    # Create a dict of arguments to pass to the 'main' function
+    args = parser.parse_args()
+    kwargs = vars(args)
+    if kwargs["fslconfig"] is None:
+        kwargs["fslconfig"] = DEFAULT_FSL_PATH
+    verbose = kwargs.pop("verbose")
+
+    return kwargs, verbose
+
+
+"""
+Parse the command line.
+"""
+inputs, verbose = get_cmd_line_args()
+runtime = {
+    "tool": "pypreclin_preproc_fmri",
+    "tool_version": version,
+    "timestamp": datetime.now().isoformat(),
+    "fsl_version": FSLWrapper([], shfile=inputs["fslconfig"]).version,
+    "pyconnectomist_version": pyconnectomist_version
+}
+if verbose > 0:   
+    pprint("[info] Starting fMRI preprocessing...")
+    pprint("-" * 50)
+    pprint("[info] Runtime:")
+    pprint(runtime)
+    pprint("[info] Inputs:")
+    pprint(inputs)
+    pprint("-" * 50)
+
+
+"""
+Execute the workflow
+"""
+outputs = preproc(verbose=verbose, **inputs)
+
+
+"""
+Update the outputs and save them and the inputs in a 'logs' directory.
+"""
+logdir = os.path.join(inputs["outdir"], "logs")
+tic = datetime.now()
+date = "{0}-{1}-{2}".format(tic.year, tic.month, tic.day)
+if not os.path.isdir(logdir):
+    os.mkdir(logdir)
+for name, final_struct in [("inputs", inputs), ("outputs", outputs),
+                           ("runtime", runtime)]:
+    log_file = os.path.join(logdir, "{0}_{1}.json".format(name, date))
+    with open(log_file, "wt") as open_file:
+        json.dump(final_struct, open_file, sort_keys=True, check_circular=True,
+                  indent=4)
+if verbose > 1:
+    print("[final]")
+    pprint(outputs)
+

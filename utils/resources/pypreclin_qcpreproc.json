@@ -1,0 +1,41 @@
+{
+    "cover": {
+        "type": "cover"
+    },
+    "page1": {
+        "type": "triplanar",
+        "style": "OneColLandscape",
+        "images": [
+            ["realign_motion_parameters.png"]
+        ],
+        "texts": [
+            "Motion correction has been done so as to estimate, and then correct for, subject's head motion."
+        ],
+        "topmargin": 0.1,
+        "linecount": 120
+    },
+    "page2": {
+        "type": "triplanar",
+        "style": "OneColLandscape",
+        "images": [
+            ["coregister_ortho.png"]
+        ],
+        "texts": [
+            "The subject's functional images have been coregistered to their anatomical image."
+        ],
+        "topmargin": 0.1,
+        "linecount": 120
+    },
+    "page3": {
+        "type": "triplanar",
+        "style": "OneColLandscape",
+        "images": [
+            ["normalization_ortho.png"]
+        ],
+        "texts": [
+            "Deformations from native to standard space have been learnt on the anatomically brain. These deformations have been used to warp the functional and anatomical images into standard space."
+        ],
+        "topmargin": 0.1,
+        "linecount": 120
+    }
+}
