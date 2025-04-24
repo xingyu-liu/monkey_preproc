@@ -31,7 +31,7 @@ from pypreclin import preproc
 # Third party import
 import pyconnectome
 from pyconnectome.utils.filetools import apply_mask
-from pyconnectome import DEFAULT_FSL_PATH
+from pypreclin import DEFAULT_FSL_PATH
 from pyconnectome.utils.regtools import flirt
 from nipype.interfaces.ants import AffineInitializer
 from nipype.interfaces.ants import ApplyTransforms
@@ -73,7 +73,7 @@ def timeserie_to_reference(tfile, outdir, rindex=None,
     """
     # Check input index
     im = nibabel.load(tfile)
-    array = im.get_data()
+    array = im.get_fdata()
     if array.ndim != 4:
         raise ValueError("A timeserie (4d volume) is expected.")
     reference_image = None
@@ -150,7 +150,7 @@ def timeserie_to_reference(tfile, outdir, rindex=None,
         elif not numpy.allclose(affine, im.affine, atol=1e-3):
             raise ValueError("Affine matrices must be the same: {0} - "
                              "{1}.".format(outdirs[0], path))
-        data = _im.get_data()
+        data = _im.get_fdata()
         data.shape += (1, )
         timeserie.append(data)
     registered_array = numpy.concatenate(timeserie, axis=3)
@@ -165,8 +165,8 @@ def timeserie_to_reference(tfile, outdir, rindex=None,
     return resfile
 
 
-def jip_align(source_file, target_file, outdir, jipdir, prefix="w",
-              auto=False, non_linear=False, fslconfig=DEFAULT_FSL_PATH):
+def jip_align(source_file, target_file, outdir, postfix='_space-template',
+              auto=False, non_linear=False):
     """ Register a source image to a taget image using the 'jip_align'
     command.
 
@@ -266,28 +266,35 @@ def jip_align(source_file, target_file, outdir, jipdir, prefix="w",
     source_file = ungzip_file(source_file, prefix="", outdir=outdir)
     target_file = ungzip_file(target_file, prefix="", outdir=outdir)
 
-    # Create jip environment
-    jip_envriron = os.environ
-    jip_envriron["JIP_HOME"] = os.path.dirname(jipdir)
-    if "PATH" in jip_envriron:
-        jip_envriron["PATH"] = jip_envriron["PATH"] + ":" + jipdir
-    else:
-        jip_envriron["PATH"] = jipdir
+    # add 0.1 to the template to avoid jip crop func_mean_file by the mask of template
+    target_file_filled = target_file.split('.')[0] + '_filled.nii.gz'
+    command_temp_jip = f'fslmaths {target_file} -add 0.1 {target_file_filled}'
+    # print(f"Running command: {command_temp_jip}")
+    _ = subprocess.run(command_temp_jip, shell=True, check=True)
+    target_file_filled = ungzip_file(target_file_filled, prefix="", outdir=outdir)
+
+    # # Create jip environment
+    # jip_envriron = os.environ
+    # jip_envriron["JIP_HOME"] = os.path.dirname(jipdir)
+    # if "PATH" in jip_envriron:
+    #     jip_envriron["PATH"] = jip_envriron["PATH"] + ":" + jipdir
+    # else:
+    #     jip_envriron["PATH"] = jipdir
 
     # Copy source file
     align_file = os.path.join(outdir, "align.com")
-    cmd = ["align", source_file, "-t", target_file]
+    cmd = ["align", source_file, "-t", target_file_filled]
     if auto:
         if non_linear:
-            auto_cmd = cmd + ["-L", "111111111111", "-W", "111", "-p 10 -j 3", "-a"]
+            cmd = cmd + ["-L", "111111111111", "-W", "111", "-p 10 -j 3", "-a"]
         else:
-            auto_cmd = cmd + ["-L", "111111111111", "-W", "000", "-A"]
+            cmd = cmd + ["-L", "111111111111", "-W", "000", "-A"]
         if os.path.isfile(align_file):
-            auto_cmd += ["-I"]
-        subprocess.call(auto_cmd, env=jip_envriron)  
-    else:
-        print(" ".join(cmd))
-        subprocess.call(cmd, env=jip_envriron)
+            cmd += ["-I"]
+        
+    print(" ".join(cmd))
+    subprocess.call(cmd)
+
     if not os.path.isfile(align_file):
         raise ValueError(
             "No 'align.com' file in '{0}' folder. JIP has probably failed: "
@@ -299,31 +306,34 @@ def jip_align(source_file, target_file, outdir, jipdir, prefix="w",
     aplly_inv_nonlin_batch = os.path.join(
         os.path.dirname(preproc.__file__), "resources", "apply_inv_nonlin.com")
 
-    # Resample the source image
-    register_file = os.path.join(outdir, prefix + os.path.basename(source_file))
+    # apply the xfm to the source image
+    register_file = os.path.join(outdir, 
+                                 os.path.basename(source_file).split('.')[0] + postfix + '.nii')
     cmd = ["jip", aplly_nonlin_batch, source_file, register_file]
-    subprocess.call(cmd, env=jip_envriron)
+    subprocess.call(cmd)
 
     # Apply mask
-    if os.path.isfile(register_file + ".gz"):
-        os.remove(register_file + ".gz")
-    register_mask_fileroot = os.path.join(
-        outdir, "m" + prefix + os.path.basename(source_file).split(".")[0])
-    register_mask_file = apply_mask(
-        input_file=register_file,
-        output_fileroot=register_mask_fileroot,
-        mask_file=target_file,
-        fslconfig=fslconfig)
+    register_mask_file = os.path.join(
+        outdir, os.path.basename(register_file).split(".")[0] + "_mask.nii.gz")
+    command_apply_mask = f'fslmaths {register_file} -mas {target_file} {register_mask_file}'
+    # print(f"Running command: {command_apply_mask}")
+    _ = subprocess.run(command_apply_mask, shell=True, check=True)
+
+    register_mask_file = ungzip_file(register_mask_file, prefix="", outdir=outdir)
+
+    # # remove the .gz file
+    # if os.path.isfile(register_file + ".gz"):
+    #     os.remove(register_file + ".gz")
 
     # Send back masked image to original space
-    register_mask_file = ungzip_file(register_mask_file, prefix="",
-                                     outdir=outdir)
+    # register_mask_file = ungzip_file(register_mask_file, prefix="",
+    #                                  outdir=outdir)
     native_masked_file = os.path.join(
-        outdir, "n" + prefix + os.path.basename(register_mask_file))
+        outdir, os.path.basename(source_file).split(".")[0] + "_mask.nii")
     cmd = ["jip", aplly_inv_nonlin_batch, register_mask_file,
            native_masked_file]
-    subprocess.call(cmd, env=jip_envriron)              
-
+    subprocess.call(cmd)              
+ 
     # Restore current working directory and gzip output
     os.chdir(cwd)
     register_file = gzip_file(
@@ -339,7 +349,7 @@ def jip_align(source_file, target_file, outdir, jipdir, prefix="w",
     return register_file, register_mask_file, native_masked_file, align_file
 
 
-def apply_jip_align(apply_to_files, align_with, outdir, jipdir, prefix="w",
+def apply_jip_align(apply_to_files, align_with, outdir, postfix="_space-template",
                     apply_inv=False):
     """ Apply a jip deformation.
 
@@ -383,29 +393,36 @@ def apply_jip_align(apply_to_files, align_with, outdir, jipdir, prefix="w",
                              "apply_nonlin.com")
     batch = os.path.abspath(batch)
 
-    # Create jip environment
-    jip_envriron = os.environ
-    jip_envriron["JIP_HOME"] = os.path.dirname(jipdir)
-    if "PATH" in jip_envriron:
-        jip_envriron["PATH"] = jip_envriron["PATH"] + ":" + jipdir
-    else:
-        jip_envriron["PATH"] = jipdir
+    # # Create jip environment
+    # jip_envriron = os.environ
+    # jip_envriron["JIP_HOME"] = os.path.dirname(jipdir)
+    # if "PATH" in jip_envriron:
+    #     jip_envriron["PATH"] = jip_envriron["PATH"] + ":" + jipdir
+    # else:
+    #     jip_envriron["PATH"] = jipdir
 
     # Apply the jip deformation
     deformed_files = []
     cwd = os.getcwd()
     for path in apply_to_files:
         extra_file = ungzip_file(path, prefix="", outdir=outdir)
+
         deformed_file = os.path.join(
-            outdir, prefix + os.path.basename(extra_file))
+            outdir, os.path.basename(extra_file).split('.')[0] + postfix + '.nii')
+        
         for align_file in align_with:
             os.chdir(os.path.dirname(align_file))
             cmd = ["jip", batch, extra_file, deformed_file]
-            subprocess.call(cmd, env=jip_envriron)
-            extra_file = deformed_file
+            subprocess.call(cmd)
+            # extra_file = deformed_file
+
         deformed_file = gzip_file(
             deformed_file, prefix="", outdir=outdir, remove_original_file=True)
         deformed_files.append(deformed_file)
+
+        # remove the .nii files
+        os.remove(extra_file)
+
     os.chdir(cwd)
 
     return deformed_files

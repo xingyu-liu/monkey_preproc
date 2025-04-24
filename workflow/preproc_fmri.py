@@ -7,6 +7,7 @@
 # for details.
 ##########################################################################
 
+# %%
 """
 fMRI preprocessings using FSL, SPM, JIP, and ANTS.
 
@@ -17,7 +18,7 @@ Steps
 2. B0 inhomogeneties correction (optional, with cache).
 3. Reorient images not in RAS coordinate system and reorient images to match
    the orientation of the standard MNI152 template (with cache).
-4. Realign: motion correction - adjust for movement between slices (with
+4. motion correction: adjust for movement between slices (with
    cache).
 5. Normalization: warp images to fit to a standard template brain (with cache).
 6. Tissues segmentation and spatial intensity variations correction (with
@@ -30,14 +31,12 @@ Steps
 10. SNAPs: compute some snaps assessing the different processing steps (with
     cache).
 11. Reporting: generate a QC reporting (with cache).
-"""
+""" 
 
-# System import
+# %% System import
 from __future__ import print_function
 import os
 import re
-import sys
-import ast
 import json
 import glob
 import shutil
@@ -47,10 +46,7 @@ from datetime import datetime
 
 # Module import
 import pypreclin
-from pypreclin import DEFAULT_FSL_PATH
-from pypreclin.utils.reorient import reorient_image
 from pypreclin.utils.reorient import guess_orientation
-from pypreclin.preproc.register import check_jip_install
 from pypreclin.preproc.register import jip_align
 from pypreclin.preproc.register import apply_jip_align
 from pypreclin.preproc.register import timeserie_to_reference
@@ -60,42 +56,30 @@ from pypreclin.preproc.undist import fugue
 from pypreclin.plotting.check_preprocessing import plot_fsl_motion_parameters
 
 # PyConnectome import
-from pyconnectome.configuration import environment, concat_environment
-from pyconnectome.utils.filetools import fslreorient2std
-from pyconnectome.utils.filetools import apply_mask
-from pyconnectome.utils.segtools import fast
-from pyconnectome.utils.segtools import bet2
-from pyconnectome.utils.regtools import mcflirt
-from pyconnectome.utils.regtools import flirt
 from pyconnectome.plotting.slicer import triplanar
 
 # PyConnectomist import
 from pyconnectomist.utils.pdftools import generate_pdf
 
 # Third party import
-import nibabel
-import pylab as plt
 from hopla.converter import hopla
 from joblib import Memory as JoblibMemory
 from nipype.interfaces import fsl
-from nipype.interfaces import ants
 from nipype.caching import Memory as NipypeMemory
 import subprocess
 
-
-# Global parameters
+# %% Global parameters
 STEPS = {
     "slice_timing": "1-SliceTiming",
-    "warp": "2-B0Inhomogeneities",
-    "realign": "3-MotionCorrection",
-    "reorient": "4-Reorient",
+    "bias_correction": "2-BiasCorrection",
+    "reorient": "3-Reorient",
+    "motion_correction" : "4-MotionCorrection",
     "registration_mean": "5-Registration_mean",
     "registration_all": "6-Registration_all",
     "smooth": "7-Smooth",
     "snaps": "8-Snaps",
     "report": "9-Report"
 }
-
 
 def preproc(
         funcfile,
@@ -104,7 +88,6 @@ def preproc(
         outdir,
         repetitiontime,
         template,
-        jipdir,
         erase,
         resample,
         interleaved,
@@ -136,6 +119,7 @@ def preproc(
         verbose):
     """ fMRI preprocessings using FSL, SPM, JIP, and ANTS.
     """
+
     # TODO: remove when all controls available in pypipe
     if not isinstance(erase, bool):
         erase = eval(erase)
@@ -152,9 +136,9 @@ def preproc(
 
     # Read input parameters
     funcfile = os.path.abspath(funcfile)
-    anatfile = os.path.abspath(anatfile)
+    if anatfile is not None:
+        anatfile = os.path.abspath(anatfile)
     template = os.path.abspath(template)
-    jipdir = os.path.abspath(jipdir)
     realign_to_mean = not realign_to_vol
     subjdir = os.path.join(os.path.abspath(outdir), sid)
     cachedir = os.path.join(subjdir, "cachedir")
@@ -165,6 +149,13 @@ def preproc(
         os.makedirs(cachedir)
     nipype_memory = NipypeMemory(cachedir)
     joblib_memory = JoblibMemory(cachedir, verbose=verbose)
+
+    # TODO
+    # ============================================================
+    # check all path needed is in the env
+    # FSLDIR, FREESURFER_HOME, ANTSPATH, JIP
+    # ============================================================
+
     def display_outputs(outputs, verbose, **kwargs):
         """ Simple function to display/store step outputs.
         """
@@ -180,14 +171,17 @@ def preproc(
     if template_axes != "RAS":
         raise ValueError("The template orientation must be 'RAS', '{0}' "
                          "found.".format(template_axes))
-    check_jip_install(jipdir)
+    
     if sliceorder not in ("ascending", "descending"):
         raise ValueError("Supported slice order are: ascending & descending.")
 
+    # ------------------------------------------------------------
     # Slice timing
-    fslenv = environment(fslconfig)
-    if (fslenv["FSLDIR"] != os.environ.get("FSLDIR", "")):
-        os.environ = concat_environment(os.environ, fslenv)
+
+    # fslenv = environment(fslconfig, env=os.environ)
+    # if (fslenv["FSLDIR"] != os.environ.get("FSLDIR", "")):
+    #     os.environ = concat_environment(os.environ, fslenv)
+    
     st_dir = os.path.join(subjdir, STEPS["slice_timing"])
     if not os.path.isdir(st_dir):
         os.mkdir(st_dir)
@@ -206,11 +200,13 @@ def preproc(
     display_outputs(
         outputs, verbose, slice_time_corrected_file=slice_time_corrected_file)
 
+    # ------------------------------------------------------------
     # B0 inhomogeneities: topup or fugue or None + motion induced
     if warp:
-        warp_dir = os.path.join(subjdir, STEPS["warp"])
-        if not os.path.isdir(warp_dir):
-            os.mkdir(warp_dir)
+        bias_correction_dir = os.path.join(subjdir, STEPS["bias_correction"])
+        if not os.path.isdir(bias_correction_dir):
+            os.mkdir(bias_correction_dir)
+
         if blip_files is not None:
             interface = joblib_memory.cache(topup)
             fieldmap_hz_file, unwarped_epi_file = interface(
@@ -221,7 +217,7 @@ def preproc(
                 apply_to=slice_time_corrected_file,
                 unwarp_direction=unwarp_direction,
                 dwell_time=dwell_time,
-                outdir=warp_dir,
+                outdir=bias_correction_dir,
                 fsl_sh=fslconfig)
         elif phase_file is not None:
             interface = joblib_memory.cache(fugue)
@@ -233,7 +229,7 @@ def preproc(
                 dwell_time=dwell_time,
                 unwarp_direction=unwarp_direction,
                 manufacturer=manufacturer,
-                outdir=warp_dir,
+                outdir=bias_correction_dir,
                 fsl_sh=fslconfig,
                 verbose=verbose)
         else:
@@ -244,52 +240,68 @@ def preproc(
             rindex=warp_index,
             restrict_deformation=warp_restrict,
             rfile=warp_file,
-            outdir=warp_dir,
+            outdir=bias_correction_dir,
             njobs=warp_njobs,
             clean_tmp=True)
+
     else:
         b0_corrected_file = slice_time_corrected_file
     display_outputs(
         outputs, verbose, b0_corrected_file=b0_corrected_file)
 
-    # Motion correction
-    realign_dir = os.path.join(subjdir, STEPS["realign"])
-    if not os.path.isdir(realign_dir):
-        os.mkdir(realign_dir)
-    motion_cor_func_rootfile = os.path.join(
-        realign_dir, "mc" + os.path.basename(b0_corrected_file).split(".")[0])
-    interface = joblib_memory.cache(mcflirt)
-    realign_funcfile, realign_func_meanfile, realign_func_parfile = interface(
-        in_file=b0_corrected_file,
-        out_fileroot=motion_cor_func_rootfile,
-        cost="normcorr",
-        bins=256,
-        dof=realign_dof,
-        refvol=warp_index,
-        reffile=warp_file,
-        reg_to_mean=realign_to_mean,
-        mats=True,
-        plots=True,
-        verbose=verbose,
-        shfile=fslconfig)
+    # ------------------------------------------------------------
+    # Reorient images not in RAS coordinate system and
+    # reorient images to match the orientation of the standard MNI152 template.
+    '''
+    reorient_dir = os.path.join(subjdir, STEPS["reorient"])
+    if not os.path.isdir(reorient_dir):
+        os.mkdir(reorient_dir)
+    reoriented_funcfile = b0_corrected_file
+    reoriented_anatfile = anatfile
+    interface = joblib_memory.cache(reorient_image)
+    if funcorient != "RAS":
+        reoriented_funcfile = interface(
+            b0_corrected_file,
+            axes=funcorient,
+            prefix="o",
+            output_directory=reorient_dir)
+    if anatorient != "RAS":
+        reoriented_anatfile = interface(
+            anatfile,
+            axes=anatorient,
+            prefix="o",
+            output_directory=reorient_dir)
+    standard_funcfile = os.path.join(
+        reorient_dir, "d" + os.path.basename(reoriented_funcfile).split(".")[0])
+    standard_anatfile = os.path.join(
+        reorient_dir, "d" + os.path.basename(reoriented_anatfile).split(".")[0])
+    interface = joblib_memory.cache(fslreorient2std)
+    standard_funcfile = interface(
+        reoriented_funcfile,
+        standard_funcfile,
+        fslconfig=fslconfig)
+    standard_anatfile = interface(
+        reoriented_anatfile,
+        standard_anatfile,
+        fslconfig=fslconfig)
     display_outputs(
-        outputs, verbose, realign_funcfile=realign_funcfile,
-        realign_func_meanfile=realign_func_meanfile)
-
-    motion_cor_func_rootfile = motion_cor_func_rootfile + ".nii.gz"
-
+        outputs, verbose, standard_funcfile=standard_funcfile,
+        standard_anatfile=standard_anatfile)
+    '''
+    
+    # ------------------------------------------------------------
     # Realign -- rigidity registration
     reorient_dir = os.path.join(subjdir, STEPS["reorient"])
     if not os.path.isdir(reorient_dir):
         os.mkdir(reorient_dir)
-    reoriented_funcfile = motion_cor_func_rootfile
-    standard_funcfile = os.path.join(
-    reorient_dir, "d" + os.path.basename(reoriented_funcfile).split(".")[0])
+
+    reoriented_funcfile = b0_corrected_file
+    standard_funcfile = os.path.join(reorient_dir, os.path.basename(reoriented_funcfile))
     
     # Step 1: Compute the mean functional image
     func_mean = os.path.join(reorient_dir, 'func_mean.nii.gz')
     command_mean = f'fslmaths {reoriented_funcfile} -Tmean {func_mean}'
-    print(f"Running command: {command_mean}")
+    # print(f"Running command: {command_mean}")
     _ = subprocess.run(command_mean, shell=True, check=True)
 
     # Step 2: Registration with ANTs
@@ -307,7 +319,7 @@ def preproc(
         f'--shrink-factors 8x4x2x1 '
         f'--smoothing-sigmas 3x2x1x0vox'
     )
-    print(f"Running command: {command_mean}")
+    # print(f"Running command: {command_mean}")
     _ = subprocess.run(command_mean_realign, shell=True, check=True)
 
     # Step 3: Apply the transformation
@@ -316,17 +328,18 @@ def preproc(
         f'antsApplyTransforms -d 3 -e 3 '
         f'-i {reoriented_funcfile} '
         f'-r {template} '
-        f'-o {standard_funcfile}.nii.gz '
+        f'-o {standard_funcfile} '
         f'-t {transform_matrix} '
         f'--float 0 --interpolation Linear'
     )
-    print(f"Running command: {command_final}")
+    # print(f"Running command: {command_final}")
     _ = subprocess.run(command_final, shell=True, check=True)
 
     # Step 4: Convert the output to float data type
     command_float = f'fslmaths {standard_funcfile} {standard_funcfile} -odt float'
-    print(f"Running command: {command_float}")
+    # print(f"Running command: {command_float}")
     _ = subprocess.run(command_float, shell=True, check=True)
+
     '''
     interface = joblib_memory.cache(fslreorient2std)
     standard_funcfile = interface(
@@ -342,10 +355,7 @@ def preproc(
         standard_anatfile=standard_anatfile)
     '''
 
-    print(f"{standard_funcfile} All steps completed successfully.")
-    
-    standard_funcfile = standard_funcfile + ".nii.gz"
-
+    # ------------------------------------------------------------
     # Downsample template
     if resample:
         template = resample_image(
@@ -353,36 +363,91 @@ def preproc(
             target_file=standard_funcfile,
             out_file=os.path.join(subjdir, "template.nii.gz"),
             fslconfig=fslconfig)
+        display_outputs(
+            outputs, verbose, template=os.path.join(subjdir, "template.nii.gz"))
 
+    # ------------------------------------------------------------
+    # motion correction
+    motion_correction_dir = os.path.join(subjdir, STEPS["motion_correction"])
+    if not os.path.isdir(motion_correction_dir):
+        os.mkdir(motion_correction_dir)
 
+    motion_correction_funcfile = os.path.join(motion_correction_dir, 
+                                               os.path.basename(standard_funcfile))
+    
+    command_mcflirt = (
+        f'mcflirt -in {standard_funcfile} '
+        f'-out {motion_correction_funcfile.split(".")[0]} '
+        f'-cost normcorr '
+        f'-dof {realign_dof} '
+        f'-mats '
+        f'-plots'
+    )
+    if verbose > 0:
+        command_mcflirt = command_mcflirt + ' -verbose 1'
+    # print(f"Running command: {command_mcflirt}")
+    _ = subprocess.run(command_mcflirt, shell=True, check=True)
+
+    # interface = joblib_memory.cache(mcflirt)
+    # realign_funcfile, realign_func_meanfile, realign_func_parfile = interface(
+    #     in_file=standard_funcfile,
+    #     out_fileroot=motion_correction_func_rootfile,
+    #     cost="normcorr",
+    #     bins=256,
+    #     dof=realign_dof,
+    #     refvol=warp_index,
+    #     reffile=warp_file,
+    #     reg_to_mean=realign_to_mean,
+    #     mats=True,
+    #     plots=True,
+    #     verbose=verbose,
+    #     shfile=fslconfig)
+
+    display_outputs(
+        outputs, verbose, motion_correction_funcfile=motion_correction_funcfile)
+
+    # ------------------------------------------------------------
+    # registration mean using JIP
     # Early stop detected
     if recon1:
         print("[warn] User requested a processing early stop. Remove the 'recon1' "
               "option to resume.")
         return outputs  
     
-    # registration mean.
+    # registration mean using JIP
     registrationMean_dir = os.path.join(subjdir, STEPS["registration_mean"])
     if not os.path.isdir(registrationMean_dir):
         os.mkdir(registrationMean_dir)
     if coregistration_trf is not None:
         shutil.copy(coregistration_trf, registrationMean_dir)
+
+    func_mean_file = os.path.join(registrationMean_dir, os.path.basename(motion_correction_funcfile))
+    func_mean_file = func_mean_file.split('.')[0] + '_mean.nii.gz'
+
+    command_func_mean = f'fslmaths {motion_correction_funcfile} -Tmean {func_mean_file}'
+    # print(f"Running command: {command_func_mean}")
+    _ = subprocess.run(command_func_mean, shell=True, check=True)
+
     interface = joblib_memory.cache(jip_align)
     (register_func_meanfile, register_func_mean_maskfile,
      native_func_mean_maskfile, align_coregfile) = interface(
-        source_file=realign_func_meanfile,
+        source_file=func_mean_file,
         target_file=template,
         outdir=registrationMean_dir,
-        jipdir=jipdir,
-        prefix="w",
+        postfix='_space-template',
         auto=auto,
-        non_linear=True,
-        fslconfig=fslconfig)
+        non_linear=False)
+
     display_outputs(
         outputs, verbose, register_func_meanfile=register_func_meanfile,
         register_func_mean_maskfile=register_func_mean_maskfile,
         native_func_mean_maskfile=native_func_mean_maskfile,
         align_coregfile=align_coregfile)
+    
+    # remove the .nii files
+    for file in os.listdir(registrationMean_dir):
+        if file.endswith('.nii'):
+            os.remove(os.path.join(registrationMean_dir, file))
     
     # Early stop detected
     if recon2:
@@ -390,54 +455,57 @@ def preproc(
               "option to resume.")
         return outputs
     
-    # registration all
+    # registration all applying xfm from registration mean
     registrationAll_dir = os.path.join(subjdir, STEPS["registration_all"])
     if not os.path.isdir(registrationAll_dir):
         os.mkdir(registrationAll_dir)
+
     interface = joblib_memory.cache(apply_jip_align)
-    deformed_files = interface(
-        apply_to_files=[realign_funcfile],
+    _ = interface(
+        apply_to_files=[motion_correction_funcfile],
         align_with=[align_coregfile],
         outdir=registrationAll_dir,
-        jipdir=jipdir,
-        prefix="w",
+        postfix='_space-template',
         apply_inv=False)
-    register_funcfile = deformed_files[0]
-    register_func_mask_fileroot = os.path.join(
-        registrationAll_dir, "m" + os.path.basename(register_funcfile).split(".")[0])
-    interface = joblib_memory.cache(apply_mask)
-    register_func_maskfile = interface(
-        input_file=register_funcfile,
-        output_fileroot=register_func_mask_fileroot,
-        mask_file=template,
-        fslconfig=fslconfig)
-    display_outputs(
-        outputs, verbose, register_funcfile=register_funcfile,
-        register_func_maskfile=register_func_maskfile)
+    # register_funcfile = deformed_files[0]
+    # register_func_mask_file = register_funcfile
 
-    # Smooth the functional serie.
-    smooth_dir = os.path.join(subjdir, STEPS["smooth"])
-    if not os.path.isdir(smooth_dir):
-        os.mkdir(smooth_dir)
-    interface = nipype_memory.cache(fsl.Smooth)
-    returncode = interface(
-        in_file=register_func_maskfile,
-        fwhm=kernel_size,
-        output_type="NIFTI",
-        smoothed_file=os.path.join(
-            smooth_dir,
-            "smooth_" + os.path.basename(register_func_maskfile).split(".")[0] +
-            ".nii"))
-    smooth_outputs = returncode.outputs.get()
-    smoothed_file = smooth_outputs["smoothed_file"]
-    display_outputs(outputs, verbose, smoothed_file=smoothed_file)
+    # register_func_mask_fileroot = os.path.join(
+    #     registrationAll_dir, "m" + os.path.basename(register_funcfile).split(".")[0])
+    # interface = joblib_memory.cache(apply_mask)
+    # register_func_maskfile = interface(
+    #     input_file=register_funcfile,
+    #     output_fileroot=register_func_mask_fileroot,
+    #     mask_file=template,
+    #     fslconfig=fslconfig)
+    # display_outputs(
+    #     outputs, verbose, register_funcfile=register_funcfile,
+    #     register_func_maskfile=register_func_maskfile)
 
-    # Copy the results to the root directory: use Nifti format.
-    nibabel.load(smoothed_file).to_filename(
-        os.path.join(subjdir, "sMNI.nii"))
-    nibabel.load(register_func_maskfile).to_filename(
-        os.path.join(subjdir, "MNI.nii"))
+    # # Smooth the functional series
+    # smooth_dir = os.path.join(subjdir, STEPS["smooth"])
+    # if not os.path.isdir(smooth_dir):
+    #     os.mkdir(smooth_dir)
+    # interface = nipype_memory.cache(fsl.Smooth)
+    # returncode = interface(
+    #     in_file=register_func_mask_file,
+    #     fwhm=kernel_size,
+    #     output_type="NIFTI",
+    #     smoothed_file=os.path.join(
+    #         smooth_dir,
+    #         "smooth_" + os.path.basename(register_func_mask_file).split(".")[0] +
+    #         ".nii"))
+    # smooth_outputs = returncode.outputs.get()
+    # smoothed_file = smooth_outputs["smoothed_file"]
+    # display_outputs(outputs, verbose, smoothed_file=smoothed_file)
 
+    # # Copy the results to the root directory: use Nifti format.
+    # nibabel.load(smoothed_file).to_filename(
+    #     os.path.join(subjdir, "sMNI.nii"))
+    # nibabel.load(register_func_maskfile).to_filename(
+    #     os.path.join(subjdir, "MNI.nii"))
+
+    # ------------------------------------------------------------
     # Compute some snaps assessing the different processing steps.
     snapdir = os.path.join(subjdir, STEPS["snaps"])
     if not os.path.isdir(snapdir):
@@ -458,7 +526,7 @@ def preproc(
     # > generate a motion parameter plot
     interface = joblib_memory.cache(plot_fsl_motion_parameters)
     realign_motion_file = os.path.join(snapdir, "realign_motion_parameters.png")
-    interface(realign_func_parfile, realign_motion_file)
+    interface(motion_correction_funcfile.split(".")[0] + ".par", realign_motion_file)
     display_outputs(
         outputs, verbose,
         realign_motion_file=realign_motion_file, coregister_file=coregister_file)

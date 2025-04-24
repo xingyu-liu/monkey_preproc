@@ -19,7 +19,7 @@ __version__ = "{0}.{1}.{2}".format(version_major, version_minor, version_micro)
 DEFAULT_SPM_STANDALONE_PATH = "/i2bm/local/bin/spm12"
 
 # Define default FSL configuration path for the package
-DEFAULT_FSL_PATH = "/etc/fsl/4.1/fsl.sh"
+DEFAULT_FSL_PATH = "/home/arcarolab_adm/fsl/etc/fslconf/fsl.sh"
 
 # Expected by setup.py: the status of the project
 CLASSIFIERS = ["Development Status :: 5 - Production/Stable",
@@ -74,17 +74,26 @@ ISRELEASE = True
 VERSION = __version__
 PROVIDES = ["pypreclin"]
 REQUIRES = [
-    "numpy>=1.11.0",
-    "scipy>=0.17.0",
-    "hopla>=1.0.5",
-    "pyconnectome[standalone]>=1.0.0",
-    "pyconnectomist>=2.0.0",
-    "nipype>=1.0.1",
-    "matplotlib==3.0.3",
-    "nibabel>=1.1.0",
+    "dipy>=1.11.0",
+    "filelock>=3.0.12",
+    "hopla==1.0.5",
     "joblib>=0.13.2",
-    "transforms3d>=0.3.1",
-    "filelock>=3.0.12"]
+    "matplotlib>=3.8.0",
+    "networkx>=3.1",
+    "nilearn>=0.11.1",
+    "nibabel>=1.1.0",
+    "nipype>=1.0.1",
+    "numpy>=1.11.0",
+    "progressbar2>=4.5.0",
+    "setuptools==66",
+    "wheel==0.38.4",
+    "pyconnectome>=1.0.0",
+    "pyconnectomist>=2.0.0",
+    "pydcmio>=2.0.2",
+    "pyfreesurfer>=1.2.0",
+    "scipy>=0.17.0",
+    "transforms3d>=0.3.1"
+]
 EXTRA_REQUIRES = {
     "gui": {
         "python-pypipe>=0.0.1"

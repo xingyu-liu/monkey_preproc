@@ -14,7 +14,7 @@ File utilities.
 import os
 
 # Third party import
-from pyconnectome import DEFAULT_FSL_PATH
+from pypreclin import DEFAULT_FSL_PATH
 from pyconnectome.wrapper import FSLWrapper
 
 

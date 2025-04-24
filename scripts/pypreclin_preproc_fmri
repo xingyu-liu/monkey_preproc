@@ -128,12 +128,6 @@ def get_cmd_line_args():
         metavar="<funcfile>",
         help="path to the fMRI NIFTI file.")
     required.add_argument(
-        "-a", "--anatfile",
-        required=True,
-        type=is_file,
-        metavar="<anatfile>",
-        help="path to the anatomical NIFTI file.")
-    required.add_argument(
         "-s", "--sid",
         required=True,
         metavar="<subject id>",
@@ -155,14 +149,19 @@ def get_cmd_line_args():
         required=True,
         metavar="<path template>",
         help="the path to the template image in RAS space.")
-    required.add_argument(
-        "-j", "--jipdir",
-        type=is_directory,
-        required=True,
-        metavar="<jip path>",
-        help="the jip software binary path.")
+    # required.add_argument(
+    #     "-j", "--jipdir",
+    #     type=is_directory,
+    #     required=True,
+    #     metavar="<jip path>",
+    #     help="the jip software binary path.")
 
     # Optional arguments
+    parser.add_argument(
+        "-a", "--anatfile",
+        type=is_file,
+        metavar="<anatfile>",
+        help="path to the anatomical NIFTI file.")
     parser.add_argument(
         "-V", "--verbose",
         type=int,
