@@ -1,0 +1,24 @@
+Metadata-Version: 2.1
+Name: pypreclin
+Version: 1.0.2
+Summary: Python processing for PreClinical data.
+Home-page: https://github.com/neurospin/pypreclin
+Author: 
+Antoine Grigis <antoine.grigis@cea.fr>
+Jordy Tasserie <jordy.tasserie@cea.fr>
+Bechir Jarraya <bechir.jarraya@cea.fr>
+
+Author-email: antoine.grigis@cea.fr
+License: CeCILL-B
+Platform: OS Independent
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Environment :: Console
+Classifier: Environment :: X11 Applications :: Qt
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Topic :: Scientific/Engineering
+Classifier: Topic :: Utilities
+Provides-Extra: gui
+License-File: LICENSE
+
+pypreclin is a Python project that provides a collection of Python scripts for processing MRI preclinical datasets. This work is made available by a community of people, amoung which the CEA Neurospin UNATI and CEA NeuroSpin UNICOG laboratories, in particular A. Grigis, J. Tasserie, and B. Jarraya.
