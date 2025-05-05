@@ -155,6 +155,48 @@ def timeserie_to_reference(tfile, outdir, rindex=None,
     return resfile
 
 
+def ants_linear_register_command(moving, fixed, out_files, affine=False):
+    """ Register a source image to a taget image using the 'ants'
+    command.
+
+    Parameters
+    ----------
+    moving: str (mandatory)
+        the source Nifti image. Should be 3d, not 4d timeseries.
+    fixed: str (mandatory)
+        the target Nifti masked image. Should be 3d, not 4d timeseries.
+    out_files: [str, str] (mandatory)
+        the output files, the first is the xfm file, the second is the transformed image.
+    """
+
+    command_mean_realign = (
+        f'antsRegistration --dimensionality 3 --float 0 '
+        f'-o [{out_files[0]}, {out_files[1]}] '
+        f'--interpolation Linear '
+        f'--winsorize-image-intensities [0.005,0.995] '
+        f'--use-histogram-matching 0 '
+        f'--initial-moving-transform [{fixed},{moving},1] '
+        f'--transform "Rigid[0.1]" '
+        f'--metric "MI[{fixed},{moving},1,32,Regular,0.25]" '
+        f'--convergence [1000x500x250x100,1e-6,10] '
+        f'--shrink-factors 8x4x2x1 '
+        f'--smoothing-sigmas 3x2x1x0vox '
+        f'--float '
+    )
+
+    if affine:
+        to_add = (
+            f'--transform "Affine[0.1]" '
+            f'--metric "MI[{fixed},{moving},1,32,Regular,0.25]" '
+            f'--convergence [1000x500x250x100,1e-6,10] '
+            f'--shrink-factors 8x4x2x1 '
+            f'--smoothing-sigmas 3x2x1x0vox'
+        )
+        command_mean_realign += to_add
+
+    return command_mean_realign
+
+
 def jip_align(source_file, target_file, outdir, postfix='_space-template',
               auto=False, non_linear=False):
     """ Register a source image to a taget image using the 'jip_align'
@@ -226,7 +268,7 @@ def jip_align(source_file, target_file, outdir, postfix='_space-template',
     cmd = ["align", source_file, "-t", target_file_blurred]
     if auto:
         if non_linear:
-            cmd = cmd + ["-L", "111111111111", "-W", "111", "-p 10 -j 3", "-a"]
+            cmd = cmd + ["-L", "111111111111", "-W", "111", "-p 5 -j 5", "-a"]
         else:
             cmd = cmd + ["-L", "111111111111", "-W", "000", "-A"]
         if os.path.isfile(align_file):

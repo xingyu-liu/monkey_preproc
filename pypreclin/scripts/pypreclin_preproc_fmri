@@ -189,110 +189,110 @@ def get_cmd_line_args():
         "-D", "--realign-dof",
         type=int, default=6, metavar="<dof>",
         help="the DOF used during the volumes realignment level.")
-    parser.add_argument(
-        "-Z", "--realign-to-vol",
-        action="store_true",
-        help="during realignment register timeseries to first or mean volume.")
-    parser.add_argument(
-        "-W", "--warp",
-        action="store_true",
-        help="use a non linear registration to remove B0 first and second "
-             "orders approximation inhomogeneities artifacts.")
-    parser.add_argument(
-        "-WN", "--warp-njobs",
-        type=int,
-        default=1,
-        help="the number of jobs running in parallel during the the B0 "
-             "inhomogeneities correction.")
-    parser.add_argument(
-        "-WI", "--warp-index",
-        type=int,
-        default=8,
-        help="if the '-w' option is set, use this parameter to "
-             "specify the reference volume index in the timeserie.")
-    parser.add_argument(
-        "-WF", "--warp-file",
-        help="if the '-w' option is set, use this parameter to specify the "
-             "reference volume to be used.")
-    parser.add_argument(
-        "-WR", "--warp-restrict",
-        type=int,
-        nargs=3,
-        default=(0, 1, 0),
-        help="restrict the deformation in the given axis.")
-    parser.add_argument(
-        "-WT", "--delta-te",
-        type=float,
-        metavar="<delta TE>",
-        help="the difference in msec between the 2 echoes of the B0 magnitude"
-             "map (usually 2.46ms).")
-    parser.add_argument(
-        "-WD", "--dwell-time",
-        type=float,
-        metavar="<dwell time>",
-        help="The dwell time or effective echo spacing.")
-    parser.add_argument(
-        "-WA", "--manufacturer",
-        type=str,
-        default="SIEMENS",
-        help="Scanner manufacturer (must be SIEMENS).")
-    parser.add_argument(
-        "-WB", "--blip-files",
-        type=is_file,
-        metavar="<path>",
-        nargs=2,
-        help="The 2 EPI data acquired in opposite phase enc. direction.")
-    parser.add_argument(
-        "-WE", "--blip-enc-dirs",
-        metavar="<path>",
-        nargs=2,
-        choices=("i", "i-", "j", "j-"),
-        help="The 2 EPI data enc. directions.")
-    parser.add_argument(
-        "-WU", "--unwarp-direction",
-        metavar="<path>",
-        choices=("i", "i-", "j", "j-"),
-        help="The EPI functional data enc. direction.")
-    parser.add_argument(
-        "-WP", "--phase-file",
-        type=is_file, metavar="<path>",
-        help="Phase difference fieldmap image from a SIEMENS scanner.")
-    parser.add_argument(
-        "-WM", "--magnitude-file",
-        type=is_file, metavar="<path>",
-        help="Two magnitude fieldmap image from a SIEMENS scanner (one for "
-             "each echo time).")
-    parser.add_argument(
-        "-NA", "--anatorient",
-        metavar="<anatorientation>",
-        default="RAS",
-        help="the input anatomical image orientation.")
-    parser.add_argument(
-        "-NF", "--funcorient",
-        metavar="<funcorientation>",
-        default="RAS",
-        help="the input functional image orientation.")
-    parser.add_argument(
-        "-K", "--kernel-size",
-        type=float,
-        default=3.,
-        metavar="<smooth kernel size>",
-        help="the smoothing kernel size in mm.")
-    parser.add_argument(
-        "-C", "--fslconfig",
-        type=is_file,
-        metavar="<fsl config>",
-        help="the FSL configuration script.")
-    parser.add_argument(
-        "-N", "--normalization-trf",
-        type=is_file,
-        metavar="<jip normalization trf>",
-        help="the JIP normalization 'align.com' file.")
-    parser.add_argument(
-        "-M", "--coregistration-trf",
-        type=is_file,
-        metavar="<jip coregistration trf>",
-        help="the JIP coregistration 'align.com' file.")
+    # parser.add_argument(
+    #     "-Z", "--realign-to-vol",
+    #     action="store_true",
+    #     help="during realignment register timeseries to first or mean volume.")
+    # parser.add_argument(
+    #     "-W", "--warp",
+    #     action="store_true",
+    #     help="use a non linear registration to remove B0 first and second "
+    #          "orders approximation inhomogeneities artifacts.")
+    # parser.add_argument(
+    #     "-WN", "--warp-njobs",
+    #     type=int,
+    #     default=1,
+    #     help="the number of jobs running in parallel during the the B0 "
+    #          "inhomogeneities correction.")
+    # parser.add_argument(
+    #     "-WI", "--warp-index",
+    #     type=int,
+    #     default=8,
+    #     help="if the '-w' option is set, use this parameter to "
+    #          "specify the reference volume index in the timeserie.")
+    # parser.add_argument(
+    #     "-WF", "--warp-file",
+    #     help="if the '-w' option is set, use this parameter to specify the "
+    #          "reference volume to be used.")
+    # parser.add_argument(
+    #     "-WR", "--warp-restrict",
+    #     type=int,
+    #     nargs=3,
+    #     default=(0, 1, 0),
+    #     help="restrict the deformation in the given axis.")
+    # parser.add_argument(
+    #     "-WT", "--delta-te",
+    #     type=float,
+    #     metavar="<delta TE>",
+    #     help="the difference in msec between the 2 echoes of the B0 magnitude"
+    #          "map (usually 2.46ms).")
+    # parser.add_argument(
+    #     "-WD", "--dwell-time",
+    #     type=float,
+    #     metavar="<dwell time>",
+    #     help="The dwell time or effective echo spacing.")
+    # parser.add_argument(
+    #     "-WA", "--manufacturer",
+    #     type=str,
+    #     default="SIEMENS",
+    #     help="Scanner manufacturer (must be SIEMENS).")
+    # parser.add_argument(
+    #     "-WB", "--blip-files",
+    #     type=is_file,
+    #     metavar="<path>",
+    #     nargs=2,
+    #     help="The 2 EPI data acquired in opposite phase enc. direction.")
+    # parser.add_argument(
+    #     "-WE", "--blip-enc-dirs",
+    #     metavar="<path>",
+    #     nargs=2,
+    #     choices=("i", "i-", "j", "j-"),
+    #     help="The 2 EPI data enc. directions.")
+    # parser.add_argument(
+    #     "-WU", "--unwarp-direction",
+    #     metavar="<path>",
+    #     choices=("i", "i-", "j", "j-"),
+    #     help="The EPI functional data enc. direction.")
+    # parser.add_argument(
+    #     "-WP", "--phase-file",
+    #     type=is_file, metavar="<path>",
+    #     help="Phase difference fieldmap image from a SIEMENS scanner.")
+    # parser.add_argument(
+    #     "-WM", "--magnitude-file",
+    #     type=is_file, metavar="<path>",
+    #     help="Two magnitude fieldmap image from a SIEMENS scanner (one for "
+    #          "each echo time).")
+    # parser.add_argument(
+    #     "-NA", "--anatorient",
+    #     metavar="<anatorientation>",
+    #     default="RAS",
+    #     help="the input anatomical image orientation.")
+    # parser.add_argument(
+    #     "-NF", "--funcorient",
+    #     metavar="<funcorientation>",
+    #     default="RAS",
+    #     help="the input functional image orientation.")
+    # parser.add_argument(
+    #     "-K", "--kernel-size",
+    #     type=float,
+    #     default=3.,
+    #     metavar="<smooth kernel size>",
+    #     help="the smoothing kernel size in mm.")
+    # parser.add_argument(
+    #     "-C", "--fslconfig",
+    #     type=is_file,
+    #     metavar="<fsl config>",
+    #     help="the FSL configuration script.")
+    # parser.add_argument(
+    #     "-N", "--normalization-trf",
+    #     type=is_file,
+    #     metavar="<jip normalization trf>",
+    #     help="the JIP normalization 'align.com' file.")
+    # parser.add_argument(
+    #     "-M", "--coregistration-trf",
+    #     type=is_file,
+    #     metavar="<jip coregistration trf>",
+    #     help="the JIP coregistration 'align.com' file.")
     parser.add_argument(
         "-R1", "--recon1",
         action="store_true",
@@ -309,6 +309,10 @@ def get_cmd_line_args():
         "-SS", "--skull_stripping",
         action="store_true",
         help="skull stripping.")
+    parser.add_argument(
+        "-FD", "--followdir", 
+        type=is_directory,
+        help="Path to a previously preprocessed directory whose alignment parameters will be reused for the current data processing.")
 
     # Create a dict of arguments to pass to the 'main' function
     args = parser.parse_args()
