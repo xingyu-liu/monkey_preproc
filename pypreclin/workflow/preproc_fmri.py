@@ -55,15 +55,15 @@ from pathlib import Path
 
 # %% Global parameters
 PROCESSING_STEPS = {
-    "slice_timing": "1-SliceTiming",
-    "motion_correction": "2-MotionCorrection",
-    "bias_correction": "3-BiasCorrection",
-    "skull_stripping": "4-SkullStripping",
-    "affine_registration": "5-PreJIPAffineRegistration",
-    "jip_registration_tmean": "6-JIPRegistration_tmean",
-    "jip_registration_all": "7-JIPRegistration_all",
-    "snaps": "8-Snaps",
-    "report": "9-Report"
+    "slice_timing": "1-slice_timing",
+    "motion_correction": "2-motion_correction",
+    "bias_correction": "3-bias_correction",
+    "skull_stripping": "4-skull_stripping",
+    "linear_registration": "5-pre_jip_linear_registration",
+    "jip_registration_tmean": "6-jip_registration_tmean",
+    "jip_registration_all": "7-jip_registration_all",
+    "snaps": "8-snaps",
+    "report": "9-report"
 }
 
 # %% Custom exception class for preprocessing errors
@@ -295,6 +295,11 @@ def preproc(
     logger.info("=" * 50)
     logger.info("Starting monkey fMRI preprocessing pipeline!")
 
+    # initialize variables and update them as the pipeline progresses
+    funcf_tmean = None
+    funcf_all = params["funcfile"]
+    templatef = params["template"]
+
     # ------------------------------------------------------------
     # Slice timing correction
     logger.info("-" * 50)
@@ -306,11 +311,11 @@ def preproc(
         logger.info(f"Created directory: {dir_slice_timing}")
 
     funcf_slice_time_corrected = os.path.join(
-        dir_slice_timing, os.path.basename(params["funcfile"]).split(".nii")[0] + ".nii.gz")
+        dir_slice_timing, os.path.basename(funcf_all).split(".nii")[0] + ".nii.gz")
 
     # Run slice timing correction using FSL's slicetimer
     command_slicetimer = (
-        f'slicetimer -i {params["funcfile"]} '
+        f'slicetimer -i {funcf_all} '
         f'-o {funcf_slice_time_corrected} '
         f'-r {params["repetitiontime"]} '
         f'-d 3 '  # slice direction (3 = z)
@@ -327,6 +332,9 @@ def preproc(
         logger.info("Slice timing correction completed successfully")
     except subprocess.CalledProcessError as e:
         raise PreprocessingError(f"Slice timing correction failed: {str(e)}", logger)
+    
+    # update the variables
+    funcf_all = funcf_slice_time_corrected
 
     # ------------------------------------------------------------
     # Motion correction
@@ -337,16 +345,13 @@ def preproc(
     if not os.path.isdir(dir_motion_correction):
         os.makedirs(dir_motion_correction)
 
-    funcf_motion_corrected = os.path.join(
-        dir_motion_correction, 
-        os.path.basename(funcf_slice_time_corrected)
-    )
+    funcf_motion_corrected = os.path.join(dir_motion_correction, os.path.basename(funcf_all))
     
     # prepare the reference volume for motion correction
     funcf_mc_ref = os.path.join(dir_motion_correction, 'func_tmean.nii.gz')
     if params["followdir"] is None:
         # get the tmean for ref_vol 
-        command_mc_ref = f'fslmaths {funcf_slice_time_corrected} -Tmean {funcf_mc_ref}'
+        command_mc_ref = f'fslmaths {funcf_all} -Tmean {funcf_mc_ref}'
         try:
             subprocess.run(command_mc_ref, shell=True, check=True)
             logger.info(f"Created reference volume using Tmean: {funcf_mc_ref}")
@@ -354,14 +359,14 @@ def preproc(
             raise PreprocessingError(f"Failed to create reference volume: {str(e)}", logger)
     else:
         # if followdir is not None, use the alignment parameters from the followdir
-        funcf_mc_ref = os.path.join(params["followdir"], 'motion_correction', 'func_tmean.nii.gz')
+        funcf_mc_ref = os.path.join(params["followdir"], PROCESSING_STEPS["motion_correction"], 'func_tmean.nii.gz')
         if not os.path.isfile(funcf_mc_ref):
             raise PreprocessingError(f"Reference volume not found in followdir: {funcf_mc_ref}", logger)
         logger.info(f"Using reference volume from followdir: {funcf_mc_ref}")
     
     command_mcflirt = (
-        f'mcflirt -in {funcf_slice_time_corrected} '
-        f'-out {funcf_motion_corrected.split(".")[0]} '
+        f'mcflirt -in {funcf_all} '
+        f'-out {funcf_motion_corrected.split(".nii")[0]} '
         f'-r {funcf_mc_ref} '
         f'-cost normcorr '
         f'-dof {realign_dof} '
@@ -376,55 +381,20 @@ def preproc(
         logger.info("Motion correction completed successfully")
     except subprocess.CalledProcessError as e:
         raise PreprocessingError(f"Motion correction failed: {str(e)}", logger)
-
-    # ------------------------------------------------------------
-    # bias correction   
-    logger.info("-" * 50)
-    logger.info(f"Step: {PROCESSING_STEPS['bias_correction']}")
-
-    dir_bias_correction = os.path.join(subjdir, PROCESSING_STEPS["bias_correction"])
-    if not os.path.isdir(dir_bias_correction):
-        os.makedirs(dir_bias_correction)
-        logger.info(f"Created directory: {dir_bias_correction}")
-
-    # step 1: get biasField from the mean functional image
-    funcf_tmean = os.path.join(dir_bias_correction, 'func_tmean.nii.gz')
-    funcf_tmean_bias_corrected = funcf_tmean.replace('.nii.gz', '_biasCorrected.nii.gz')
-    funcf_bias_field = funcf_tmean.replace('.nii.gz', '_biasField.nii.gz')
     
-    # get func_tmean_file
-    command_mean = f'fslmaths {funcf_motion_corrected} -Tmean {funcf_tmean}'
+    # generate func tmean motion corrected image
+    funcf_tmean_motion_corrected = os.path.join(dir_motion_correction, 'func_tmean_motion_corrected.nii.gz')
+    command_mean = f'fslmaths {funcf_motion_corrected} -Tmean {funcf_tmean_motion_corrected}'
     try:
         subprocess.run(command_mean, shell=True, check=True)
-        logger.info(f"Created func Tmean image: {funcf_tmean}")
+        logger.info(f"Created motion corrected func Tmean image: {funcf_tmean_motion_corrected}")
     except subprocess.CalledProcessError as e:
-        raise PreprocessingError(f"Failed to create func Tmean image: {str(e)}", logger)
-
-    # run bias correction
-    command_bias_correction = (
-        f'N4BiasFieldCorrection -d 3 '
-        f'-i {funcf_tmean} '
-        f'-o [ {funcf_tmean_bias_corrected}, {funcf_bias_field} ] '
-        f'-s 2 '
-        f'-b [ 40 ]'
-    )
-    try:
-        subprocess.run(command_bias_correction, shell=True, check=True)
-        logger.info("Bias correction completed successfully for func Tmean")
-    except subprocess.CalledProcessError as e:
-        raise PreprocessingError(f"Bias correction failed for func Tmean: {str(e)}", logger)
-
-    # step 2: apply bias correction to the functional image by dividing the bias field
-    funcf_bias_corrected = os.path.join(dir_bias_correction, 
-                                        os.path.basename(funcf_motion_corrected))
-
-    command_ants_apply_transforms = f'fslmaths {funcf_motion_corrected} -div {funcf_bias_field} {funcf_bias_corrected}'   
-    try:
-        subprocess.run(command_ants_apply_transforms, shell=True, check=True)
-        logger.info("Bias correction completed successfully")
-    except subprocess.CalledProcessError as e:
-        raise PreprocessingError(f"Bias correction failed: {str(e)}", logger)
-
+        raise PreprocessingError(f"Failed to create motion corrected func Tmean image: {str(e)}", logger)
+    
+    # update the variables
+    funcf_tmean = funcf_tmean_motion_corrected
+    funcf_all = funcf_motion_corrected
+    
     # ------------------------------------------------------------
     # skull stripping and only keep the cortex and subcortical structures other than cerebellum and brainstem
     if params["skull_stripping"]:
@@ -444,7 +414,7 @@ def preproc(
             # run unet on tmean image to get the brain mask
             command_func_ss = (
                 f'python {os.environ["MACAQUE_SS_UNET"]}/muSkullStrip.py '
-                f'-in {funcf_tmean_bias_corrected} '
+                f'-in {funcf_tmean} '
                 f'-out {dir_skull_stripping} '
                 f'-suffix brainMask ' 
                 f'-model {os.path.join(os.environ["MACAQUE_SS_UNET"], "models", "epi_retrained_model-20-epoch.model")} '
@@ -456,102 +426,132 @@ def preproc(
                 raise PreprocessingError(f"Unet brain mask failed: {str(e)}", logger)
 
             # rename the brain mask file
-            funcf_brain_mask_temp = os.path.join(dir_skull_stripping, os.path.basename(funcf_tmean_bias_corrected).split('.')[0] + '_brainMask.nii.gz')
+            funcf_brain_mask_temp = os.path.join(dir_skull_stripping, os.path.basename(funcf_tmean).split('.nii')[0] + '_brainMask.nii.gz')
             shutil.move(funcf_brain_mask_temp, funcf_brain_mask)
             logger.info(f"Created brain mask: {funcf_brain_mask}")
 
         else:
             # if followdir is not None, use the brain mask from the followdir
-            funcf_brain_mask = os.path.join(params["followdir"], 'skull_stripping', 'func_tmean_brainMask.nii.gz')
+            funcf_brain_mask = os.path.join(params["followdir"], PROCESSING_STEPS["skull_stripping"], 'func_tmean_brainMask.nii.gz')
             if not os.path.isfile(funcf_brain_mask):
                 raise PreprocessingError(f"The file to be followed {funcf_brain_mask} does not exist.", logger)
             logger.info(f"Set brain mask from followdir: {funcf_brain_mask}")
 
         # apply the mask to the tmean image
-        funcf_tmean_skullstripped = os.path.join(dir_skull_stripping, os.path.basename(funcf_tmean_bias_corrected).split('.')[0] + '_brain.nii.gz')
-        command_apply_mask = f'fslmaths {funcf_tmean_bias_corrected} -mul {funcf_brain_mask} {funcf_tmean_skullstripped}'
+        funcf_tmean_skullstripped = os.path.join(dir_skull_stripping, os.path.basename(funcf_tmean).split('.')[0] + '_brain.nii.gz')
+        command_apply_mask = f'fslmaths {funcf_tmean} -mul {funcf_brain_mask} {funcf_tmean_skullstripped}'
         try:
             subprocess.run(command_apply_mask, shell=True, check=True)
             logger.info("Brain mask applied successfully on func Tmean")
         except subprocess.CalledProcessError as e:
             raise PreprocessingError(f"Brain mask application failed on func Tmean: {str(e)}", logger)
-
+        
         # apply the mask to the functional image
-        funcf_skullstripped = os.path.join(dir_skull_stripping, os.path.basename(funcf_bias_corrected))
-        command_apply_mask = f'fslmaths {funcf_bias_corrected} -mul {funcf_brain_mask} {funcf_skullstripped}'
+        funcf_skullstripped = os.path.join(dir_skull_stripping, os.path.basename(funcf_motion_corrected))
+        command_apply_mask = f'fslmaths {funcf_motion_corrected} -mul {funcf_brain_mask} {funcf_skullstripped}'
         try:
             subprocess.run(command_apply_mask, shell=True, check=True)
             logger.info("Brain mask applied successfully")
         except subprocess.CalledProcessError as e:
             raise PreprocessingError(f"Brain mask application failed: {str(e)}", logger)
 
-    else:
-        funcf_tmean_skullstripped = funcf_tmean_bias_corrected
-        funcf_skullstripped = funcf_bias_corrected
+        # update the variables
+        funcf_tmean = funcf_tmean_skullstripped
+        funcf_all = funcf_skullstripped
 
     # ------------------------------------------------------------
-    # reorient - registration to template to prepare for jip registration
+    # bias correction   
     logger.info("-" * 50)
-    logger.info(f"Step: {PROCESSING_STEPS['affine_registration']}")
+    logger.info(f"Step: {PROCESSING_STEPS['bias_correction']}")
+    logger.info('# Bias correction is only applied to the func tmean image to aid the skull '
+                'stripping and registration. It will not be applied to the functional image.')
 
-    dir_affine_reg = os.path.join(subjdir, PROCESSING_STEPS["affine_registration"])
-    if not os.path.isdir(dir_affine_reg):
-        os.makedirs(dir_affine_reg)
+    dir_bias_correction = os.path.join(subjdir, PROCESSING_STEPS["bias_correction"])
+    if not os.path.isdir(dir_bias_correction):
+        os.makedirs(dir_bias_correction)
+        logger.info(f"Created directory: {dir_bias_correction}")
+
+    # Get biasField from the func tmean image
+    funcf_tmean_bias_corrected = os.path.join(dir_bias_correction, 'func_tmean_biasCorrected.nii.gz')
+    funcf_bias_field = funcf_tmean_bias_corrected.replace('_biasCorrected.nii.gz', '_biasField.nii.gz')
+
+    # run bias correction
+    command_bias_correction = (
+        f'N4BiasFieldCorrection -d 3 '
+        f'-i {funcf_tmean} '
+        f'-o [ {funcf_tmean_bias_corrected}, {funcf_bias_field} ] '
+        f'-s 2 '
+        f'-b [ 40 ]'
+    )
+    try:
+        subprocess.run(command_bias_correction, shell=True, check=True)
+        logger.info("Bias correction completed successfully for func Tmean")
+    except subprocess.CalledProcessError as e:
+        raise PreprocessingError(f"Bias correction failed for func Tmean: {str(e)}", logger)
+    
+    # update the variables
+    funcf_tmean = funcf_tmean_bias_corrected
+
+    # ------------------------------------------------------------
+    # linear registration to template to prepare for jip registration
+    logger.info("-" * 50)
+    logger.info(f"Step: {PROCESSING_STEPS['linear_registration']}")
+
+    dir_linear_reg = os.path.join(subjdir, PROCESSING_STEPS["linear_registration"])
+    if not os.path.isdir(dir_linear_reg):
+        os.makedirs(dir_linear_reg)
 
     if params["resample"]:
-        template_orig = template
-        template_fname = os.path.basename(template).split('.nii')[0] + '_res-1.nii.gz'
-
+        templatef_resampled = os.path.join(dir_linear_reg, os.path.basename(templatef).split('.nii')[0] + '_res-1.nii.gz')
+        
         if params["followdir"] is None:
-            # resample the template to 1mm resolution 
-            template = os.path.join(dir_affine_reg, template_fname)
-            command_resample = f'flirt -in {template_orig} -ref {template_orig} -out {template} -applyisoxfm 1 -interp trilinear'
+            command_resample = (
+                f'flirt -in {templatef} '
+                f'-ref {templatef} '
+                f'-out {templatef_resampled} '
+                f'-applyisoxfm 1 '
+                f'-interp trilinear'
+            )
             try:
                 subprocess.run(command_resample, shell=True, check=True)
-                logger.info("Template resampled to 1mm resolution")
+                logger.info(f"Template resampled to 1mm resolution: {templatef_resampled}")
             except subprocess.CalledProcessError as e:
                 raise PreprocessingError(f"Template resampling failed: {str(e)}", logger)
         else:
-            # if followdir is not None, use the template from the followdir
-            template = os.path.join(params["followdir"], 'reorient', template_fname)
-            if not os.path.isfile(template):
-                raise PreprocessingError(f"The file to be followed {template} does not exist.", logger)
-            logger.info(f"Set template from followdir: {template}")
-
-    else:
-        if params["followdir"] is not None:
-            template = os.path.join(params["followdir"], 'reorient', os.path.basename(template))
-            if not os.path.isfile(template):
-                raise PreprocessingError(f"The file to be followed {template} does not exist.", logger)
-            logger.info(f"Set template from followdir: {template}")
-
+            templatef_resampled = os.path.join(params["followdir"], PROCESSING_STEPS["linear_registration"], os.path.basename(templatef_resampled))
+            logger.info(f"Using resampled template from followdir: {templatef_resampled}")
+        
+        # update the variables
+        templatef = templatef_resampled
+    
     # 1. Registrate the mean image with ANTs
-    funcf_affine_reg_prefix = os.path.join(dir_affine_reg, 'func_realign')
-    funcf_tmean_affine_reg = funcf_affine_reg_prefix + '.nii.gz'
+    funcf_linear_reg_prefix = os.path.join(dir_linear_reg, 'func_tmean_realign')
+    funcf_tmean_linear_reg = funcf_linear_reg_prefix + '.nii.gz'
 
     if params["followdir"] is None:
-        command_register = ants_linear_register_command(funcf_tmean_skullstripped, template, 
-                            [funcf_affine_reg_prefix + '_', funcf_tmean_affine_reg], 
+        command_register = ants_linear_register_command(funcf_tmean, templatef, 
+                            [funcf_linear_reg_prefix + '_', funcf_tmean_linear_reg], 
                             affine=True)
         try:
             subprocess.run(command_register, shell=True, check=True)
             logger.info("Registration completed successfully for func Tmean")
         except subprocess.CalledProcessError as e:
             raise PreprocessingError(f"Registration failed for func Tmean: {str(e)}", logger)
-        transform_mat = f'{funcf_affine_reg_prefix}_0GenericAffine.mat'
+        transform_mat = f'{funcf_linear_reg_prefix}_0GenericAffine.mat'
     else:
-        transform_mat = os.path.join(params["followdir"], 'reorient', f'{os.path.basename(funcf_affine_reg_prefix)}_0GenericAffine.mat')
+        transform_mat = os.path.join(params["followdir"], PROCESSING_STEPS["linear_registration"], 
+            f'{os.path.basename(funcf_linear_reg_prefix)}_0GenericAffine.mat')
         if not os.path.isfile(transform_mat):
             raise PreprocessingError(f"The file to be followed {transform_mat} does not exist.", logger)
         logger.info(f"Set transform matrix from followdir: {transform_mat}")
 
     # 2. Apply the transformation to the functional image
-    funcf_affine_reg = os.path.join(dir_affine_reg, os.path.basename(funcf_skullstripped))
+    funcf_linear_reg = os.path.join(dir_linear_reg, os.path.basename(funcf_all))
     command_apply_reg = (
         f'antsApplyTransforms -d 3 -e 3 '
-        f'-i {funcf_skullstripped} '
-        f'-r {template} '
-        f'-o {funcf_affine_reg} '
+        f'-i {funcf_all} '
+        f'-r {templatef} '
+        f'-o {funcf_linear_reg} '
         f'-t {transform_mat} '
         f'--float --interpolation Linear'
     )
@@ -560,31 +560,50 @@ def preproc(
         logger.info("Registration completed successfully")
     except subprocess.CalledProcessError as e:
         raise PreprocessingError(f"Registration failed: {str(e)}", logger)
+    
+    # update the variables
+    funcf_tmean = funcf_tmean_linear_reg
+    funcf_all = funcf_linear_reg
 
     # ------------------------------------------------------------
     # registration tmean using JIP
-    logger.info("-" * 50)
-    logger.info(f"Step: {PROCESSING_STEPS['jip_registration_tmean']}")
-    
-    # registration mean using JIP
-    dir_jip_reg_tmean = os.path.join(subjdir, PROCESSING_STEPS["jip_registration_tmean"])
-    if not os.path.isdir(dir_jip_reg_tmean):
-        os.makedirs(dir_jip_reg_tmean)
-        logger.info(f"Created directory: {dir_jip_reg_tmean}")
+    if params["followdir"] is None:
+        logger.info("-" * 50)
+        logger.info(f"Step: {PROCESSING_STEPS['jip_registration_tmean']}")
+        
+        # registration mean using JIP
+        dir_jip_reg_tmean = os.path.join(subjdir, PROCESSING_STEPS["jip_registration_tmean"])
+        if not os.path.isdir(dir_jip_reg_tmean):
+            os.makedirs(dir_jip_reg_tmean)
+            logger.info(f"Created directory: {dir_jip_reg_tmean}")
 
-    # run jip registration
-    interface = joblib_memory.cache(jip_align)
-    try:
-        (funcf_tmean_reg, _, _, align_coregfile) = interface(
-            source_file=funcf_tmean_affine_reg,
-            target_file=template,
-            outdir=dir_jip_reg_tmean,
-            postfix='_space-template',
-            auto=auto,
-            non_linear=True)
-        logger.info("JIP registration completed successfully for func Tmean")
-    except subprocess.CalledProcessError as e:
-        raise PreprocessingError(f"JIP registration failed for func Tmean: {str(e)}", logger)
+        # run jip registration
+        interface = joblib_memory.cache(jip_align)
+        try:
+            (_, _, _, align_coregfile) = interface(
+                source_file=funcf_tmean,
+                target_file=templatef,
+                outdir=dir_jip_reg_tmean,
+                postfix='_space-template',
+                auto=params["auto"],
+                non_linear=True)
+            logger.info("JIP registration completed successfully for func Tmean")
+        except subprocess.CalledProcessError as e:
+            raise PreprocessingError(f"JIP registration failed for func Tmean: {str(e)}", logger)
+
+        # remove the .nii files if .nii.gz files exist in the registration mean directory
+        for file in os.listdir(dir_jip_reg_tmean):
+            if file.endswith('.nii'):
+                if file == 'distortions.nii':
+                    continue
+                if os.path.exists(file.replace('.nii', '.nii.gz')):
+                    os.remove(os.path.join(dir_jip_reg_tmean, file))
+                else:
+                    gzip_file(os.path.join(dir_jip_reg_tmean, file), prefix="", outdir=dir_jip_reg_tmean, remove_original_file=True)
+
+    else:
+        align_coregfile = os.path.join(params["followdir"], PROCESSING_STEPS["jip_registration_tmean"], 'align.com')
+        logger.info(f"Set align coreg file from followdir: {align_coregfile}")
     
     # ------------------------------------------------------------
     # registration all applying xfm from registration mean
@@ -600,7 +619,7 @@ def preproc(
     try:
         interface = joblib_memory.cache(apply_jip_align)
         _ = interface(
-            apply_to_files=[funcf_affine_reg],
+            apply_to_files=[funcf_all],
             align_with=[align_coregfile],
             outdir=dir_jip_reg_all,
             postfix='_space-template',          
@@ -608,18 +627,27 @@ def preproc(
         logger.info("JIP registration completed successfully")
     except subprocess.CalledProcessError as e:
         raise PreprocessingError(f"JIP registration failed: {str(e)}", logger)
-
-    # remove the .nii files if .nii.gz files exist in the registration mean directory
-    for file in os.listdir(dir_jip_reg_tmean):
-        if file.endswith('.nii'):
-            if os.path.exists(file.replace('.nii', '.nii.gz')):
-                os.remove(os.path.join(dir_jip_reg_tmean, file))
-            else:
-                gzip_file(os.path.join(dir_jip_reg_tmean, file), prefix="", outdir=dir_jip_reg_tmean, remove_original_file=True)
-
+    
+    # generate final func tmean image for reporting
+    funcf_reg_all = os.path.join(dir_jip_reg_all, os.path.basename(funcf_all).split('.nii')[0] + '_space-template.nii.gz')
+    funcf_tmean_reg = os.path.join(dir_jip_reg_all, 'func_tmean_reg.nii.gz')
+    command_get_tmean = f'fslmaths {funcf_reg_all} -Tmean {funcf_tmean_reg}'
+    try:
+        subprocess.run(command_get_tmean, shell=True, check=True)
+        logger.info("Final Tmean image created successfully")
+    except subprocess.CalledProcessError as e:
+        raise PreprocessingError(f"Final Tmean image creation failed: {str(e)}", logger)
+    
+    # update the variables
+    funcf_tmean = funcf_tmean_reg
+    funcf_all = funcf_reg_all
+    
     # ------------------------------------------------------------
     logger.info("Preprocessing completed successfully")
     logger.info("=" * 50)
+    logger.info(f"Final output files: "
+                f"func data: {funcf_all}, \n"
+                f"func tmean: {funcf_tmean}")
 
     # ------------------------------------------------------------
     # Compute some snaps assessing the different processing steps.
@@ -630,12 +658,13 @@ def preproc(
     if not os.path.isdir(dir_snap):
         os.mkdir(dir_snap)
     interface = joblib_memory.cache(triplanar)
+
     # > generate coregistration plot
     coregister_fileroot = os.path.join(dir_snap, "coregister")
-    coregister_file = interface(
-        input_file=funcf_tmean_reg,
+    interface(
+        input_file=funcf_tmean,
         output_fileroot=coregister_fileroot,
-        overlays=[template],
+        overlays=[templatef],
         overlays_colors=None,
         contours=True,
         edges=False,
@@ -648,10 +677,8 @@ def preproc(
     interface(funcf_motion_corrected.split(".")[0] + ".par", realign_motion_file)
 
     # Generate a QC reporting
-    reportdir = os.path.join(subjdir, PROCESSING_STEPS["report"])
-    reportfile = os.path.join(reportdir, "QC_preproc_{0}.pdf".format(sid))
-    if not os.path.isdir(reportdir):
-        os.mkdir(reportdir)
+    reportfile = os.path.join(subjdir, "QC_report.pdf")
+
     interface = joblib_memory.cache(generate_pdf)
     tic = datetime.now()
     date = "{0}-{1}-{2}".format(tic.year, tic.month, tic.day)
